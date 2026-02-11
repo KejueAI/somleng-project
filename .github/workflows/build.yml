@@ -35,14 +35,10 @@ jobs:
         env:
           AWS_REGION: us-east-1
 
-      - name: Run docker compose
-        run: |
-          docker compose up -d
-
       - name: Bootstrap DB
         id: bootstrap_db
         run: |
-          output=$(docker compose run -T somleng bundle exec rails db:setup)
+          output=$(docker compose --profile somleng-bootstrap run -T somleng-bootstrap)
           account_sid=$(echo $output | grep -Po 'Account\s+SID:\s+\K\b[a-zA-Z0-9-]+\b')
           auth_token=$(echo $output | grep -Po 'Auth\s+Token:\s+\K\b[a-zA-Z0-9_-]+\b')
           phone_number=$(echo $output | grep -Po 'Phone\s+Number:\s+\K\b[a-zA-Z0-9-]+\b')
@@ -52,28 +48,74 @@ jobs:
           echo "phone_number=$phone_number" >> $GITHUB_OUTPUT
           echo "sms_gateway_device_token=$sms_gateway_device_token" >> $GITHUB_OUTPUT
 
+      - name: Run docker compose
+        run: |
+          docker compose up -d --wait
+
       - name: Start SMS Gateway
         run: |
           DEVICE_TOKEN="${{ steps.bootstrap_db.outputs.sms_gateway_device_token }}" docker compose up --wait -d sms-gateway
 
       - name: Test an outbound call
         run: |
-          curl --fail -s -X "POST" "http://api.lvh.me:3000/2010-04-01/Accounts/${{ steps.bootstrap_db.outputs.account_sid }}/Calls" \
+          response=$(mktemp)
+
+          http_code=$(curl -s \
+            -o "$response" \
+            -w "%{http_code}" \
+            -X POST "http://api.lvh.me:3000/2010-04-01/Accounts/${{ steps.bootstrap_db.outputs.account_sid }}/Calls" \
             -H 'Content-Type: application/x-www-form-urlencoded; charset=utf-8' \
             -u "${{ steps.bootstrap_db.outputs.account_sid }}:${{ steps.bootstrap_db.outputs.auth_token }}" \
             --data-urlencode "Url=https://demo.twilio.com/docs/voice.xml" \
             --data-urlencode "Method=GET" \
             --data-urlencode "To=+299221234" \
             --data-urlencode "From=${{ steps.bootstrap_db.outputs.phone_number }}"
+          )
+
+          if [ "$http_code" -ge 400 ]; then
+            if [ "$http_code" -lt 500 ]; then
+              echo "Client error (HTTP $http_code)"
+              echo "Response body:"
+              cat "$response_file"
+            else
+              echo "Server error (HTTP $http_code)"
+              echo "Dumping Somleng logs:"
+              docker compose logs somleng
+            fi
+            exit 1
+          fi
 
       - name: Test an outbound SMS
+        id: test_outbound_sms
         run: |
-          curl --fail -s -X "POST" "http://api.lvh.me:3000/2010-04-01/Accounts/${{ steps.bootstrap_db.outputs.account_sid }}/Messages" \
+          response_file=$(mktemp)
+
+          http_code=$(curl -s \
+            -o "$response_file" \
+            -w "%{http_code}" \
+            -X POST "http://api.lvh.me:3000/2010-04-01/Accounts/${{ steps.bootstrap_db.outputs.account_sid }}/Messages" \
             -H 'Content-Type: application/x-www-form-urlencoded; charset=utf-8' \
             -u "${{ steps.bootstrap_db.outputs.account_sid }}:${{ steps.bootstrap_db.outputs.auth_token }}" \
             --data-urlencode "To=+299221234" \
             --data-urlencode "Body=Hello World from Integration Test" \
             --data-urlencode "From=${{ steps.bootstrap_db.outputs.phone_number }}"
+          )
+
+          if [ "$http_code" -ge 400 ]; then
+            if [ "$http_code" -lt 500 ]; then
+              echo "Client error (HTTP $http_code)"
+              echo "Response body:"
+              cat "$response_file"
+            else
+              echo "Server error (HTTP $http_code)"
+              echo "Dumping Somleng logs:"
+              docker compose logs somleng
+            fi
+            exit 1
+          fi
+
+          message_sid=$(jq -r '.sid' "$response_file")
+          echo "message_sid=$message_sid" >> "$GITHUB_OUTPUT"
 
       - name: Assert SMS Gateway received message
         run: |
@@ -97,6 +139,35 @@ jobs:
             echo "❌ Message not found in SMS Gateway logs after $((MAX_RETRIES * SLEEP_INTERVAL)) seconds."
             echo "Dumping full SMS Gateway logs for debugging:"
             docker compose logs sms-gateway
+            exit 1
+          fi
+
+      - name: Assert SMS Billing
+        run: |
+          echo "Waiting for pricing to be updated..."
+          MAX_RETRIES=21
+          SLEEP_INTERVAL=3
+          FOUND=0
+
+          for i in $(seq 1 $MAX_RETRIES); do
+            response=$(curl --fail -s -u "${{ steps.bootstrap_db.outputs.account_sid }}:${{ steps.bootstrap_db.outputs.auth_token }}" \
+              "http://api.lvh.me:3000/2010-04-01/Accounts/${{ steps.bootstrap_db.outputs.account_sid }}/Messages/${{ steps.test_outbound_sms.outputs.message_sid }}")
+            price=$(echo $response | jq -r '.price')
+
+            if [ "$price" != "null" ]; then
+              echo "✅ Pricing updated!"
+              FOUND=1
+              break
+            fi
+
+            echo "Attempt $i/$MAX_RETRIES: pricing not yet updated, waiting $SLEEP_INTERVAL seconds..."
+            sleep $SLEEP_INTERVAL
+          done
+
+          if [ $FOUND -eq 0 ]; then
+            echo "❌ Pricing not updated after $((MAX_RETRIES * SLEEP_INTERVAL)) seconds."
+            echo "Dumping full response for debugging:"
+            echo $response
             exit 1
           fi
 

@@ -32,6 +32,10 @@ services:
       REDIS_URL: redis://redis:6379/0
       ANYCABLE_SECRET: secret
       ANYCABLE_BROADCAST_ADAPTER: redisx
+      RATING_ENGINE_HOST: http://rating-engine-api:2080
+      RATING_ENGINE_USERNAME: cgrates
+      RATING_ENGINE_PASSWORD: password
+      STUB_RATING_ENGINE: "false"
     ports:
       - "3000:3000"
     depends_on: &somleng_depends_on
@@ -59,6 +63,40 @@ services:
       - "server"
       - "-b"
       - "0.0.0.0"
+
+  somleng-bootstrap:
+    <<: *somleng
+    command: bundle exec rails db:setup
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+      rating-engine-api:
+        condition: service_healthy
+    profiles:
+      - somleng-bootstrap
+
+  somleng-scheduler:
+    <<: *somleng
+    command:
+      - /bin/sh
+      - -c
+      - |
+        while true; do
+          bundle exec rails runner "PerMinuteJob.perform_later"
+          sleep 60
+        done
+    environment:
+      <<: *somleng_environment
+      ACTIVE_JOB_QUEUE_ADAPTER: "inline"
+    depends_on:
+      <<: *somleng_depends_on
+    ports: []
+    healthcheck:
+      test: ["CMD-SHELL", "exit 0"]
+      interval: 10s
+      timeout: 5s
+      retries: 1
 
   ws:
     image: anycable/anycable-go:latest-alpine
@@ -161,7 +199,7 @@ services:
       ws:
         condition: service_healthy
     profiles:
-      - donotstart
+      - sms-gateway
     healthcheck:
       test:
         [
@@ -194,7 +232,7 @@ services:
       HTTP_LISTEN_ADDRESS: "0.0.0.0:2080"
       BOOTSTRAP_DB: "true"
       SERVER_MODE: "api"
-      JSON_RPC_USERNAME: "somleng"
+      JSON_RPC_USERNAME: "cgrates"
       JSON_RPC_PASSWORD: "password"
     expose:
       - "2080/tcp"
