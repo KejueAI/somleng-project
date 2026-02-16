@@ -94,10 +94,10 @@ info "Bootstrapping the database..."
 BOOTSTRAP_OUTPUT=$(docker compose -f "$COMPOSE_FILE" --profile bootstrap run --rm -T somleng-bootstrap 2>&1) || true
 echo "$BOOTSTRAP_OUTPUT"
 
-# Extract credentials from bootstrap output
-ACCOUNT_SID=$(echo "$BOOTSTRAP_OUTPUT" | grep -oP 'account_sid:\s*\K\S+' || true)
-AUTH_TOKEN=$(echo "$BOOTSTRAP_OUTPUT" | grep -oP 'auth_token:\s*\K\S+' || true)
-PHONE_NUMBER=$(echo "$BOOTSTRAP_OUTPUT" | grep -oP 'phone_number:\s*\K\S+' || true)
+# Extract credentials (portable — no grep -P)
+ACCOUNT_SID=$(echo "$BOOTSTRAP_OUTPUT" | grep 'account_sid:' | awk '{print $NF}' || true)
+AUTH_TOKEN=$(echo "$BOOTSTRAP_OUTPUT" | grep 'auth_token:' | awk '{print $NF}' || true)
+PHONE_NUMBER=$(echo "$BOOTSTRAP_OUTPUT" | grep 'phone_number:' | awk '{print $NF}' || true)
 
 # ---------------------------------------------------------------------------
 # 6. Start all services
@@ -113,8 +113,8 @@ echo "============================================================"
 echo "  Somleng Platform is running!"
 echo "============================================================"
 echo ""
-echo "  Dashboard:  https://${DOMAIN}"
-echo "  API Base:   https://${DOMAIN}/api"
+echo "  Dashboard:  https://appsip.${DOMAIN}"
+echo "  API Base:   https://apisip.${DOMAIN}"
 echo "  SIP:        ${FS_EXTERNAL_SIP_IP}:5060 (UDP)"
 echo ""
 if [ -n "${ACCOUNT_SID:-}" ]; then

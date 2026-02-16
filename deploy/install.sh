@@ -17,7 +17,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 DOMAIN=""
 PUBLIC_IP=""
-REPO_URL="https://github.com/somleng/somleng-project.git"
+REPO_URL="https://github.com/KejueAI/somleng-project.git"
 BRANCH="main"
 INSTALL_DIR="/opt/somleng"
 
