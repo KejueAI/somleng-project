@@ -1,0 +1,325 @@
+services:
+  caddy:
+    image: caddy:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      somleng:
+        condition: service_healthy
+      ws:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://localhost:80/health_checks || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${AWS_ACCESS_KEY_ID:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data
+    expose:
+      - "9000"
+      - "9001"
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio-setup:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
+      mc mb --ignore-existing local/$${UPLOADS_BUCKET};
+      exit 0;
+      "
+    environment:
+      MINIO_ROOT_USER: ${AWS_ACCESS_KEY_ID:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
+      UPLOADS_BUCKET: ${UPLOADS_BUCKET:-somleng-uploads}
+    restart: "no"
+
+  db:
+    image: public.ecr.aws/docker/library/postgres:alpine
+    restart: unless-stopped
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ../docker/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: public.ecr.aws/docker/library/redis:alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  somleng: &somleng
+    image: ghcr.io/somleng/somleng
+    restart: unless-stopped
+    volumes:
+      - ./config/app_settings.yml:/rails/config/app_settings.yml:ro
+    environment: &somleng_environment
+      RAILS_ENV: ${RAILS_ENV:-production}
+      DATABASE_HOST: db
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: somleng
+      DATABASE_USERNAME: ${POSTGRES_USER:-postgres}
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD}
+      DASHBOARD_URL_HOST: "https://${DOMAIN}"
+      APP_URL_HOST: "https://appsip.${DOMAIN}"
+      AWS_REGION: ${AWS_REGION:-eu-central-1}
+      AWS_DEFAULT_REGION: ${AWS_REGION:-eu-central-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
+      AWS_ENDPOINT: http://minio:9000
+      UPLOADS_BUCKET: ${UPLOADS_BUCKET:-somleng-uploads}
+      SWITCH_HOST: "http://somleng-switch:8080"
+      DB_POOL: ${DB_POOL:-30}
+      REDIS_URL: redis://redis:6379/0
+      ANYCABLE_SECRET: ${ANYCABLE_SECRET}
+      ANYCABLE_BROADCAST_ADAPTER: redisx
+      RATING_ENGINE_HOST: http://rating-engine-api:2080
+      RATING_ENGINE_USERNAME: ${RATING_ENGINE_USERNAME:-cgrates}
+      RATING_ENGINE_PASSWORD: ${RATING_ENGINE_PASSWORD}
+      STUB_RATING_ENGINE: "false"
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+    ports:
+      - "3000:3000"
+    depends_on: &somleng_depends_on
+      db:
+        condition: service_healthy
+      minio-setup:
+        condition: service_completed_successfully
+      somleng-switch:
+        condition: service_healthy
+      rating-engine-api:
+        condition: service_healthy
+    networks:
+      default:
+        aliases:
+          - api.internal
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget --server-response --spider --quiet http://0.0.0.0:3000/health_checks 2>&1 | grep '200 OK' > /dev/null",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    command:
+      - "./bin/rails"
+      - "server"
+      - "-b"
+      - "0.0.0.0"
+
+  somleng-bootstrap:
+    <<: *somleng
+    command: bundle exec rails db:setup
+    restart: "no"
+    ports: []
+    depends_on:
+      db:
+        condition: service_healthy
+      rating-engine-api:
+        condition: service_healthy
+    profiles:
+      - bootstrap
+
+  somleng-scheduler:
+    <<: *somleng
+    command:
+      - /bin/sh
+      - -c
+      - |
+        while true; do
+          bundle exec rails runner "PerMinuteJob.perform_later"
+          sleep 60
+        done
+    environment:
+      <<: *somleng_environment
+      ACTIVE_JOB_QUEUE_ADAPTER: "inline"
+    depends_on:
+      <<: *somleng_depends_on
+    ports: []
+    expose: []
+    healthcheck:
+      test: ["CMD-SHELL", "exit 0"]
+      interval: 10s
+      timeout: 5s
+      retries: 1
+
+  ws:
+    image: anycable/anycable-go:latest-alpine
+    restart: unless-stopped
+    expose:
+      - "8080"
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      ANYCABLE_HOST: "0.0.0.0"
+      ANYCABLE_PORT: "8080"
+      ANYCABLE_DISABLE_TELEMETRY: "true"
+      ANYCABLE_RPC_HOST: anycable:50051
+      ANYCABLE_BROADCAST_ADAPTER: redisx
+      ANYCABLE_BROKER: memory
+      ANYCABLE_PUBSUB: redis
+      ANYCABLE_HEADERS: x-device-key
+      ANYCABLE_SECRET: ${ANYCABLE_SECRET}
+      ANYCABLE_HEALTH_PATH: "/health"
+      ANYCABLE_LOG_FORMAT: "json"
+    depends_on:
+      redis:
+        condition: service_healthy
+      anycable:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget --server-response --spider --quiet http://0.0.0.0:8080/health 2>&1 | grep '200 OK' > /dev/null",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  anycable:
+    <<: *somleng
+    command: bundle exec anycable
+    environment:
+      <<: *somleng_environment
+      ANYCABLE_RPC_HOST: 0.0.0.0:50051
+    ports: []
+    expose:
+      - "50051"
+    depends_on:
+      <<: *somleng_depends_on
+    healthcheck:
+      test: ["CMD-SHELL", "grpc-health-probe -addr :50051"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  somleng-switch:
+    image: ghcr.io/somleng/switch-app
+    restart: unless-stopped
+    environment:
+      AHN_CORE_HOST: freeswitch
+      AHN_CORE_HTTP_PORT: 8080
+      CALL_PLATFORM_HOST: "http://api.internal:3000"
+      REDIS_URL: "redis://redis:6379/1"
+    depends_on:
+      redis:
+        condition: service_healthy
+      freeswitch:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget --server-response --spider --quiet http://0.0.0.0:8080/health_checks 2>&1 | grep '200 OK' > /dev/null",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  freeswitch:
+    image: ghcr.io/somleng/freeswitch
+    restart: unless-stopped
+    environment:
+      - FS_DATABASE_HOST=db
+      - FS_MOD_JSON_CDR_URL=http://api.internal:3000/services/call_data_records
+      - FS_EXTERNAL_SIP_IP=${FS_EXTERNAL_SIP_IP}
+      - FS_EXTERNAL_RTP_IP=${FS_EXTERNAL_RTP_IP}
+    ports:
+      - "5060:5060/udp"
+    depends_on:
+      - db
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z -w 5 localhost 5222"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  sms-gateway:
+    image: ghcr.io/somleng/sms-gateway
+    restart: unless-stopped
+    environment:
+      - DEVICE_TOKEN=${SMS_GATEWAY_DEVICE_TOKEN}
+    command: somleng-sms-gateway -v -k ${SMS_GATEWAY_DEVICE_TOKEN} -d ws://ws:8080 dummy
+    depends_on:
+      ws:
+        condition: service_healthy
+    profiles:
+      - sms-gateway
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget --server-response --spider --quiet http://localhost:3210 2>&1 | grep '200 OK' > /dev/null",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  rating-engine-api:
+    image: ghcr.io/somleng/rating-engine:latest-debug
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    environment:
+      STORDB_DBNAME: "cgrates"
+      STORDB_USER: ${POSTGRES_USER:-postgres}
+      STORDB_PASSWORD: ${POSTGRES_PASSWORD}
+      STORDB_HOST: db
+      STORDB_PORT: 5432
+      DATADB_HOST: "redis"
+      DATADB_USER: ""
+      DATADB_PORT: 6379
+      DATADB_DBNAME: 2
+      CONNECTION_MODE: "*localhost"
+      LOG_LEVEL: 7
+      HTTP_LISTEN_ADDRESS: "0.0.0.0:2080"
+      BOOTSTRAP_DB: "true"
+      SERVER_MODE: "api"
+      JSON_RPC_USERNAME: ${RATING_ENGINE_USERNAME:-cgrates}
+      JSON_RPC_PASSWORD: ${RATING_ENGINE_PASSWORD}
+    expose:
+      - "2080"
+
+volumes:
+  db_data:
+  redis_data:
+  minio_data:
+  caddy_data:
+  caddy_config:

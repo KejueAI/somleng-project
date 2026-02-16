@@ -1,0 +1,44 @@
+# Somleng Reverse Proxy Configuration
+#
+# DNS Requirements:
+#   A record:  chorus-ai.co           → <server-public-ip>
+#   A record:  *.chorus-ai.co         → <server-public-ip>
+#
+# The wildcard record enables subdomain-based routing:
+#   apisip.chorus-ai.co                  → Twilio-compatible REST API
+#   appsip.chorus-ai.co                  → Main dashboard
+#   my-carrier.appsip.chorus-ai.co       → Carrier dashboards
+#   verifysip.chorus-ai.co               → Verify API
+
+# On-demand TLS: automatically obtains certificates for subdomains
+{
+	on_demand_tls {
+		ask http://somleng:3000/health_checks
+	}
+}
+
+# Proxy config shared by all site blocks
+(proxy) {
+	handle /cable* {
+		reverse_proxy ws:8080
+	}
+
+	handle {
+		reverse_proxy somleng:3000 {
+			header_up Host {http.request.host}
+		}
+	}
+}
+
+# Main domain — standard automatic HTTPS
+{$DOMAIN:localhost} {
+	import proxy
+}
+
+# All subdomains — on-demand TLS for wildcard support
+*.{$DOMAIN:localhost} {
+	tls {
+		on_demand
+	}
+	import proxy
+}

@@ -1,0 +1,92 @@
+default: &default
+  app_subdomain: "appsip"
+  api_subdomain: "apisip"
+  verify_subdomain: "verifysip"
+  client_gateway_domain: "sip.somleng.org"
+  mailer_sender: <%= ENV.fetch("MAILER_SENDER", "no-reply@somleng.org") %>
+  aws_sqs_high_priority_queue_name: <%= ENV.fetch("AWS_SQS_HIGH_PRIORITY_QUEUE_NAME", "high-priority") %>
+  aws_sqs_medium_priority_queue_name: <%= ENV.fetch("AWS_SQS_MEDIUM_PRIORITY_QUEUE_NAME", "medium-priority") %>
+  aws_sqs_default_queue_name: <%= ENV.fetch("AWS_SQS_DEFAULT_QUEUE_NAME", "default-priority") %>
+  aws_sqs_low_priority_queue_name: <%= ENV.fetch("AWS_SQS_LOW_PRIORITY_QUEUE_NAME", "low-priority") %>
+  aws_sqs_long_running_queue_name: <%= ENV.fetch("AWS_SQS_LONG_RUNNING_QUEUE_NAME", "long-running") %>
+  aws_sqs_outbound_calls_queue_name: <%= ENV.fetch("AWS_SQS_OUTBOUND_CALLS_QUEUE_NAME", "outbound-calls") %>
+  aws_sqs_scheduler_queue_name: <%= ENV.fetch("AWS_SQS_SCHEDULER_QUEUE_NAME", "scheduler") %>
+  aws_ses_region: <%= ENV.fetch("AWS_SES_REGION", "ap-southeast-1") %>
+  aws_region: <%= ENV.fetch("AWS_DEFAULT_REGION", "ap-southeast-1") %>
+  uploads_bucket: <%= ENV.fetch("UPLOADS_BUCKET", "upload-bucket") %>
+  raw_recordings_bucket: <%= ENV.fetch("RAW_RECORDINGS_BUCKET", "raw-recordings-bucket") %>
+  recaptcha_minimum_score: <%= ENV.fetch("RECAPTCHA_MINIMUM_SCORE", 0.9) %>
+  recaptcha_site_key: <%= ENV.fetch("RECAPTCHA_SITE_KEY", "6Ld43mkqAAAAAN81bwur1zpsqIoC1kdD3Wsc4oXz") %>
+  recaptcha_secret_key: <%= ENV.fetch("RECAPTCHA_SECRET_KEY", "6Ld43mkqAAAAAA8969tEGiE3m-UUMhnBy0va_Cu1") %>
+  recaptcha_fallback_site_key: <%= ENV.fetch("RECAPTCHA_FALLBACK_SITE_KEY", "6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI") %>
+  recaptcha_fallback_secret_key: <%= ENV.fetch("RECAPTCHA_FALLBACK_SECRET_KEY", "6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe") %>
+  datawrapper_api_key: <%= ENV["DATAWRAPPER_API_KEY"] %>
+  datawrapper_chart_id: <%= ENV["DATAWRAPPER_CHART_ID"] %>
+  call_service_username: <%= ENV.fetch("CALL_SERVICE_USERNAME", "adhearsion") %>
+  admin_username: <%= ENV.fetch("ADMIN_USERNAME", "admin") %>
+  services_username: <%= ENV.fetch("SERVICES_USERNAME", "services") %>
+  call_service_default_region: <%= ENV.fetch("CALL_SERVICE_DEFAULT_REGION", "hydrogen") %>
+  region_data: <%= ENV.fetch("REGION_DATA", "{}") %>
+  stub_regions: <%= ENV.fetch("STUB_REGIONS", true).to_s == "true" %>
+  sip_port: 5060
+  redis_url: <%= ENV.fetch("REDIS_URL") { "redis://localhost:6379/1" } %>
+  redis_pool_size: <%= ENV.fetch('DB_POOL') { 250 } %>
+  rating_engine_host: <%= ENV.fetch("RATING_ENGINE_HOST", "http://localhost:2080") %>
+  rating_engine_username: <%= ENV.fetch("RATING_ENGINE_USERNAME", "cgrates") %>
+  rating_engine_password: <%= ENV.fetch("RATING_ENGINE_PASSWORD", "password") %>
+  pghero_other_databases: "<%= ENV["PGHERO_OTHER_DATABASES"] %>"
+  pghero_db_instance_identifier: "<%= ENV["PGHERO_DB_INSTANCE_IDENTIFIER"] %>"
+  global_call_sessions_limit: <%= ENV.fetch("GLOBAL_CALL_SESSIONS_LIMIT", 120) %>
+  account_call_sessions_limit: <%= ENV.fetch("ACCOUNT_CALL_SESSIONS_LIMIT", 80) %>
+  active_record_encryption:
+    primary_key: 5Owbop0UTpEsYwX0wK56VM1eg4xl7LXX
+    deterministic_key: 5J0sxNi4YDp5cZnfV9BhXpujwgoOvhgV
+    key_derivation_salt: M8Ic6zpgGiXHYCjOH8nie0c9aMtFoPWV
+
+production: &production
+  <<: *default
+  app_url_host: "<%= ENV.fetch("APP_URL_HOST", "https://appsip.somleng.org") %>"
+  asset_url_host: "<%= ENV.fetch("ASSET_URL_HOST", "") %>"
+  call_service_default_host: "<%= ENV.fetch("CALL_SERVICE_DEFAULT_HOST", "http://somleng-switch:8080") %>"
+  call_service_password: "<%= ENV.fetch('CALL_SERVICE_PASSWORD', nil) %>"
+  call_service_queue_url: "<%= ENV.fetch('CALL_SERVICE_QUEUE_URL', nil) %>"
+  rating_engine_host: <%= ENV.fetch("RATING_ENGINE_HOST", "http://rating-engine-api:2080") %>
+  rating_engine_username: <%= ENV.fetch("RATING_ENGINE_USERNAME", "cgrates") %>
+  rating_engine_password: <%= ENV.fetch("RATING_ENGINE_PASSWORD", nil) %>
+  sentry_dsn: "<%= ENV.fetch("SENTRY_DSN", "") %>"
+  services_password: '<%= ENV.fetch("SERVICES_PASSWORD", nil) %>'
+  recaptcha_site_key: "<%= ENV.fetch("RECAPTCHA_SITE_KEY", "6Ld43mkqAAAAAN81bwur1zpsqIoC1kdD3Wsc4oXz") %>"
+  recaptcha_secret_key: "<%= ENV.fetch("RECAPTCHA_SECRET_KEY", "6Ld43mkqAAAAAA8969tEGiE3m-UUMhnBy0va_Cu1") %>"
+  recaptcha_fallback_site_key: "<%= ENV.fetch("RECAPTCHA_FALLBACK_SITE_KEY", "6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI") %>"
+  recaptcha_fallback_secret_key: "<%= ENV.fetch("RECAPTCHA_FALLBACK_SECRET_KEY", "6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe") %>"
+  admin_password: "<%= ENV.fetch("ADMIN_PASSWORD", "Somleng1234!") %>"
+  stub_regions: false
+  active_record_encryption:
+    primary_key: "<%= ENV.fetch("ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY", "5Owbop0UTpEsYwX0wK56VM1eg4xl7LXX") %>"
+    deterministic_key: "<%= ENV.fetch("ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY", "5J0sxNi4YDp5cZnfV9BhXpujwgoOvhgV") %>"
+    key_derivation_salt: "<%= ENV.fetch("ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT", "M8Ic6zpgGiXHYCjOH8nie0c9aMtFoPWV") %>"
+
+staging:
+  <<: *production
+  app_subdomain: "appsip-staging"
+  api_subdomain: "apisip-staging"
+  verify_subdomain: "verifysip-staging"
+  app_url_host: <%= ENV.fetch("APP_URL_HOST", "https://appsip-staging.somleng.org") %>
+  sip_port: 6060
+  client_gateway_domain: "Connect Via Public IP"
+
+development: &development
+  <<: *default
+  app_url_host: <%= ENV.fetch("APP_URL_HOST", "http://appsip-foobar.lvh.me:3000") %>
+  call_service_default_host: <%= ENV.fetch('CALL_SERVICE_DEFAULT_HOST', 'http://localhost:8080') %>
+  call_service_password: "<%= ENV.fetch('CALL_SERVICE_PASSWORD', 'password') %>"
+  call_service_queue_url: "<%= ENV.fetch('CALL_SERVICE_QUEUE_URL', 'https://amazonaws.com/12345/call_service_queue') %>"
+  admin_password: "<%= ENV.fetch('ADMIN_PASSWORD', 'password') %>"
+  services_password: "<%= ENV.fetch('SERVICES_PASSWORD', 'password') %>"
+  active_job_queue_adapter: "<%= ENV.fetch('ACTIVE_JOB_QUEUE_ADAPTER', 'async') %>"
+  stub_rating_engine: <%= ENV.fetch("STUB_RATING_ENGINE", "true").to_s == "true" %>
+
+test:
+  <<: *development
+  call_service_default_host: "https://switch.hydrogen.somleng.org"
+  app_url_host: "http://appsip.lvh.me"
